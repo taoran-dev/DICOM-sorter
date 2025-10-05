@@ -39,7 +39,7 @@ Optionally, it can de‑identify common header fields in a way aligned with DICO
 ### Open in a browser
 
 - Download or clone this repository
-- Open `dicom-sorter-anonymizer-v1.0.0.2.html` in the latest Chrome/Edge
+- Open `index.html` in the latest Chrome/Edge
 - Click “Select Directory” (inside the drop zone) and choose a folder of DICOM files
 - Review the Planned Output (Preview)
 - Click “Save To Folder” (fast) or “Download Processed Files” (ZIP)
@@ -143,7 +143,7 @@ D0/
 
 Project layout:
 
-- `dicom-sorter-anonymizer-v1.0.0.2.html` — the entire web app (UI + logic)
+- `index.html` — the entire web app (UI + logic)
 - `main.js` — Electron entrypoint (loads the HTML app)
 - `package.json` — electron/electron‑builder configuration and scripts
 - `UI_STYLE_GUIDE.md` — visual language and tokens used in the UI
@@ -170,4 +170,3 @@ See the “Help & About” panel in the app for full license texts.
 ## Disclaimer
 
 This tool is provided “as‑is” for research/engineering workflows. It is not a medical device and is not intended for primary diagnosis or therapeutic decision‑making. If using the optional header de‑identification, you remain responsible for ensuring compliance with applicable regulations and for validating that no PHI is present in pixel data or private attributes.
-
