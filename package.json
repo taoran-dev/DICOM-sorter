@@ -1,0 +1,51 @@
+{
+  "name": "dicom-sorter",
+  "version": "1.1.0",
+  "description": "DICOM Sorter — Electron desktop packaging",
+  "main": "main.js",
+  "author": "",
+  "license": "UNLICENSED",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder",
+    "build:win": "electron-builder --win portable",
+    "build:linux": "electron-builder --linux AppImage",
+    "build:mac": "electron-builder --mac dmg"
+  },
+  "devDependencies": {
+    "electron": "^28.3.3",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "com.example.dicom.sorter",
+    "productName": "DICOM Sorter",
+    "asar": true,
+    "files": [
+      "**/*",
+      "!dist/**",
+      "!node_modules/**/.cache/**"
+    ],
+    "directories": {
+      "output": "dist"
+    },
+    "mac": {
+      "category": "public.app-category.medical",
+      "target": ["dmg"],
+      "artifactName": "${productName}-${version}-mac.${ext}"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "portable",
+          "arch": ["x64"]
+        }
+      ],
+      "artifactName": "${productName}-${version}-win-portable.exe"
+    },
+    "linux": {
+      "target": ["AppImage"],
+      "category": "Medical",
+      "artifactName": "${productName}-${version}.AppImage"
+    }
+  }
+}

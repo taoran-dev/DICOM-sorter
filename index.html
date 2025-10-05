@@ -1,0 +1,1916 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DICOM Sorter v1.1</title>
+    
+    <script>
+        // Function to load scripts with local fallback
+        function loadScript(localPath, cdnUrl, callback) {
+            const script = document.createElement('script');
+            script.onload = callback;
+            script.onerror = function() {
+                console.warn(`Failed to load local script: ${localPath}, trying CDN: ${cdnUrl}`);
+                const fallbackScript = document.createElement('script');
+                fallbackScript.onload = callback;
+                fallbackScript.onerror = function() {
+                    console.error(`Failed to load script from both local (${localPath}) and CDN (${cdnUrl})`);
+                    alert(`Failed to load required JavaScript library. Please ensure ${localPath} is available in the same directory as this HTML file.`);
+                };
+                fallbackScript.src = cdnUrl;
+                document.head.appendChild(fallbackScript);
+            };
+            script.src = localPath;
+            document.head.appendChild(script);
+        }
+
+        // Load all required libraries
+        let scriptsLoaded = 0;
+        const totalScripts = 3;
+        
+        function onScriptLoad() {
+            scriptsLoaded++;
+            if (scriptsLoaded === totalScripts) {
+                if (document.readyState === 'loading') {
+                    document.addEventListener('DOMContentLoaded', () => new DICOMProcessor());
+                } else {
+                    new DICOMProcessor();
+                }
+            }
+        }
+
+        loadScript('./dicomParser.min.js', 'https://unpkg.com/dicom-parser@1.8.21/dist/dicomParser.min.js', onScriptLoad);
+        loadScript('./dcmjs.min.js', 'https://unpkg.com/dcmjs@0.33.0/build/dcmjs.min.js', onScriptLoad);  
+        loadScript('./jszip.min.js', 'https://unpkg.com/jszip@3.10.1/dist/jszip.min.js', onScriptLoad);
+    </script>
+
+    <style>
+        :root {
+            --accent-primary: #009999;
+            --accent-secondary: #ec6602;
+            --primary-dark: #000000;
+            --secondary-dark: #404040;
+            --text-primary: #ffffff;
+            --text-secondary: #bfbfbf;
+            --text-dim: #808080;
+            --panel-bg: #404040;
+            --panel-border: #808080;
+            --input-bg: #000000;
+            --input-border: #808080;
+            --hover-bg: #4d4d4d;
+            --error: #ec6602;
+            --success: #009999;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            min-height: 100vh;
+            padding: 40px;
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--secondary-dark);
+            color: var(--text-primary);
+        }
+
+        .app-shell {
+            max-width: 1180px;
+            margin: 0 auto;
+            display: flex;
+            flex-direction: column;
+            gap: 32px;
+        }
+
+        .panel {
+            background: var(--panel-bg);
+            border: 1px solid var(--panel-border);
+            border-radius: 8px;
+            padding: 24px 28px;
+        }
+
+        .header-panel {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+
+        .header-title {
+            font-size: 18px;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .header-subtitle {
+            font-size: 13px;
+            color: var(--text-secondary);
+        }
+
+        .badge {
+            align-self: flex-start;
+            padding: 4px 12px;
+            border-radius: 4px;
+            font-size: 11px;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            border: 1px solid var(--accent-primary);
+            color: var(--accent-primary);
+        }
+
+        .section-title {
+            font-size: 11px;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: var(--text-dim);
+            margin-bottom: 16px;
+        }
+
+        .config-grid,
+        .actions-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 16px;
+        }
+
+        .field,
+        .checkbox-group {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            flex: 1;
+            min-width: 240px;
+        }
+
+        label {
+            font-size: 13px;
+            color: var(--text-secondary);
+        }
+
+        input[type="text"],
+        input[type="date"],
+        select {
+            background: var(--input-bg);
+            color: var(--text-primary);
+            border: 1px solid var(--input-border);
+            border-radius: 4px;
+            padding: 10px 12px;
+            font-size: 13px;
+            transition: border-color 0.2s ease, background 0.2s ease;
+        }
+
+        input[type="text"]:focus,
+        input[type="date"]:focus,
+        select:focus {
+            outline: none;
+            border-color: var(--accent-primary);
+            background: #111;
+        }
+
+        .checkbox-field {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 12px 14px;
+            background: var(--input-bg);
+            border: 1px solid var(--input-border);
+            border-radius: 4px;
+            min-width: 260px;
+        }
+
+        .checkbox-field input[type="checkbox"] {
+            width: 16px;
+            height: 16px;
+            accent-color: var(--accent-primary);
+        }
+
+        .drop-zone {
+            margin-top: 12px;
+            padding: 32px;
+            border: 1px dashed var(--input-border);
+            border-radius: 6px;
+            background: var(--input-bg);
+            text-align: center;
+            color: var(--text-secondary);
+            transition: border-color 0.2s ease, background 0.2s ease;
+            cursor: pointer;
+        }
+
+        .drop-zone:hover,
+        .drop-zone.dragover {
+            border-color: var(--accent-primary);
+            background: rgba(0, 153, 153, 0.08);
+        }
+
+        .drop-zone .upload-icon {
+            font-size: 32px;
+            margin-bottom: 12px;
+            color: var(--text-secondary);
+        }
+
+        .upload-text { font-size: 13px; }
+
+        .upload-subtext {
+            margin-top: 6px;
+            font-size: 12px;
+            color: var(--text-dim);
+        }
+
+        .actions-row {
+            justify-content: center;
+            margin-top: 16px;
+        }
+
+        .btn {
+            border-radius: 4px;
+            border: 1px solid var(--input-border);
+            background: var(--panel-bg);
+            color: var(--text-primary);
+            font-size: 13px;
+            font-weight: 500;
+            padding: 10px 20px;
+            transition: all 0.2s ease;
+            cursor: pointer;
+            min-width: 140px;
+        }
+
+        .btn:hover:not(:disabled) {
+            border-color: var(--accent-primary);
+            background: var(--hover-bg);
+        }
+
+        .btn:disabled {
+            opacity: 0.45;
+            cursor: not-allowed;
+        }
+
+        .btn-primary {
+            background: var(--accent-primary);
+            border-color: var(--accent-primary);
+            color: #fff;
+        }
+
+        .btn-danger {
+            border-color: var(--error);
+            color: var(--error);
+        }
+
+        .btn-danger:hover:not(:disabled) {
+            background: var(--error);
+            color: #fff;
+        }
+
+        .btn-muted {
+            background: #2a2a2a;
+            border-color: var(--panel-border);
+            color: var(--text-secondary);
+        }
+
+        .progress-container {
+            background: var(--input-bg);
+            border: 1px solid var(--panel-border);
+            border-radius: 4px;
+            margin-top: 24px;
+            overflow: hidden;
+            display: none;
+        }
+
+        .progress-bar {
+            background: var(--accent-primary);
+            height: 18px;
+            width: 0%;
+            position: relative;
+            transition: width 0.2s ease;
+        }
+
+        .progress-text {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 11px;
+            color: #fff;
+        }
+
+        .results-panel {
+            display: none;
+            background: var(--panel-bg);
+            border: 1px solid var(--panel-border);
+            border-radius: 8px;
+            padding: 24px 28px;
+        }
+
+        .results-header {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            margin-bottom: 16px;
+        }
+
+        .results-header h3 {
+            font-size: 14px;
+            font-weight: 500;
+            color: var(--success);
+        }
+
+        .results-header p {
+            font-size: 13px;
+            color: var(--text-secondary);
+        }
+
+        .phi-warning {
+            border: 1px solid var(--accent-secondary);
+            background: rgba(236, 102, 2, 0.12);
+            border-radius: 6px;
+            padding: 16px;
+            margin-bottom: 20px;
+            display: none;
+        }
+
+        .phi-warning h4 {
+            font-size: 13px;
+            color: var(--accent-secondary);
+            margin-bottom: 8px;
+        }
+
+        .phi-warning p {
+            font-size: 12px;
+            color: var(--text-secondary);
+            margin-bottom: 6px;
+        }
+
+        .file-list {
+            border: 1px solid var(--panel-border);
+            border-radius: 4px;
+            background: var(--input-bg);
+            max-height: 300px;
+            overflow-y: auto;
+        }
+
+        .file-item {
+            padding: 12px 16px;
+            display: flex;
+            justify-content: space-between;
+            gap: 12px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+        }
+
+        .file-item:last-child {
+            border-bottom: none;
+        }
+
+        .file-info {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .file-name {
+            font-size: 13px;
+            color: var(--text-primary);
+        }
+
+        .file-meta {
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+
+        .status {
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            border: 1px solid transparent;
+            align-self: center;
+        }
+
+        .status.success {
+            border-color: rgba(0, 153, 153, 0.5);
+            color: var(--success);
+        }
+
+        .status.error {
+            border-color: rgba(236, 102, 2, 0.4);
+            color: var(--accent-secondary);
+        }
+
+        .log-container {
+            display: none;
+            margin-top: 20px;
+            border: 1px solid var(--panel-border);
+            border-radius: 6px;
+            background: #111;
+            padding: 16px;
+            font-family: 'JetBrains Mono', 'SFMono-Regular', ui-monospace, monospace;
+            font-size: 12px;
+            color: var(--text-secondary);
+            max-height: 220px;
+            overflow-y: auto;
+        }
+
+        .log-entry {
+            margin-bottom: 6px;
+            display: flex;
+            gap: 12px;
+        }
+
+        .log-timestamp { color: var(--text-dim); }
+        .log-info { color: var(--text-secondary); }
+        .log-error { color: var(--accent-secondary); }
+        .log-success { color: var(--accent-primary); }
+
+        .tree-preview {
+            background: #111;
+            border: 1px solid var(--panel-border);
+            border-radius: 6px;
+            padding: 12px;
+            font-family: 'JetBrains Mono', 'SFMono-Regular', ui-monospace, monospace;
+            font-size: 12px;
+            color: var(--text-secondary);
+            white-space: pre;
+            max-height: 320px;
+            overflow: auto;
+        }
+
+        .preview-layout {
+            display: flex;
+            gap: 16px;
+        }
+        .preview-col { flex: 1 1 50%; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+        .actions-col { flex: 1 1 50%; min-width: 0; display: flex; flex-direction: column; gap: 12px; }
+
+        @media (max-width: 768px) {
+            body { padding: 20px; }
+            .panel, .results-panel { padding: 20px; }
+            .config-grid, .actions-row { flex-direction: column; }
+            .checkbox-field { width: 100%; }
+            .btn { width: 100%; }
+        }
+    </style>
+</head>
+<body>
+    <div class="app-shell">
+        <section class="panel header-panel">
+            <div class="header-title">🏥 DICOM Sorter v1.1</div>
+            <p class="header-subtitle">Sort files by type, date, time, frame‑of‑reference</p>
+            <div class="badge">Type · Date · Time · FoR</div>
+        </section>
+
+        
+
+        <section class="panel">
+            <div class="section-title">Input Files</div>
+            <div class="drop-zone" id="fileUpload">
+                <div class="upload-icon">📁</div>
+                <div class="upload-text">Drop DICOM files or folders here</div>
+                <div class="upload-subtext">Supports .dcm / .dicom and directory selection</div>
+                <input type="file" id="fileInput" multiple accept="*" hidden>
+                <input type="file" id="directoryInput" webkitdirectory hidden>
+                <div style="margin-top: 12px;">
+                    <button type="button" class="btn btn-primary" id="selectDirectoryBtn">📁 Select Directory</button>
+                </div>
+            </div>
+
+
+            
+        </section>
+
+        <section class="panel" id="previewPanel" style="display: none;">
+            <div class="section-title">Planned Output (Preview)</div>
+            <div class="preview-layout">
+                <div class="preview-col">
+                    <div id="treePreview" class="tree-preview"></div>
+                </div>
+                <div class="actions-col">
+                    <div class="actions-row">
+                        <button class="btn btn-danger" id="clearBtn">🗑️ Clear All</button>
+                    </div>
+                    <div class="actions-row">
+                        <button class="btn btn-primary" id="downloadBtn" style="display: none;">📥 Download Processed Files</button>
+                    </div>
+                    <div class="actions-row">
+                        <button class="btn" id="saveToFolderBtn" style="display: none;">📂 Save To Folder</button>
+                    </div>
+                    <div class="progress-container" id="progressContainer">
+                        <div class="progress-bar" id="progressBar"><div class="progress-text" id="progressText">0%</div></div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section class="panel">
+            <details id="anonymizationPanel">
+                <summary class="section-title">Anonymization (optional)</summary>
+                <div class="config-grid">
+                    <div class="field">
+                        <label for="patientId">Patient ID</label>
+                        <input type="text" id="patientId" value="" placeholder="Leave blank for auto-generated random ID">
+                    </div>
+                    <div class="field">
+                        <label for="patientName">Patient Name</label>
+                        <input type="text" id="patientName" value="" placeholder="Leave blank for random name generation">
+                    </div>
+                </div>
+                <div class="config-grid" style="margin-top: 12px;">
+                    <div class="field">
+                        <label for="birthDate">Birth Date</label>
+                        <input type="date" id="birthDate" value="" placeholder="Leave blank for random date within ±1 year">
+                    </div>
+                    <div class="field">
+                        <label for="sortMethod">Sort Method</label>
+                        <select id="sortMethod">
+                            <option value="time">By Acquisition Time</option>
+                            <option value="series">By Series</option>
+                            <option value="modality">By Modality</option>
+                            <option value="date" selected>By Acquisition Date (D1, D5, D10…)</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="config-grid" style="margin-top: 12px;">
+                    <div class="checkbox-field">
+                        <input type="checkbox" id="enableAnonymization">
+                        <label for="enableAnonymization">Enable header de-identification (PS3.15‑aligned)</label>
+                    </div>
+                    <div class="checkbox-field">
+                        <input type="checkbox" id="randomizeData">
+                        <label for="randomizeData">Auto-generate randomized patient demographics</label>
+                    </div>
+                </div>
+                <div class="config-grid" style="margin-top: 12px;">
+                    <div class="checkbox-field">
+                        <input type="checkbox" id="processAllFiles">
+                        <label for="processAllFiles">Process all files (ignore extension filtering)</label>
+                    </div>
+                    <div class="checkbox-field">
+                        <input type="checkbox" id="stripPrivateTags">
+                        <label for="stripPrivateTags">Strip private manufacturer tags</label>
+                    </div>
+                </div>
+            </details>
+        </section>
+
+        <section class="results-panel" id="results">
+            <div class="results-header">
+                <h3>Processing Complete</h3>
+                <p id="resultsMessage">Files have been successfully processed.</p>
+            </div>
+            <div id="resultsTree" class="tree-preview" style="display:none;"></div>
+            <div class="phi-warning" id="phiWarning">
+                <h4>Manual PHI Verification Required</h4>
+                <p><strong>Header De-identification:</strong> When enabled, this tool removes PHI from DICOM headers in a manner aligned with the DICOM PS3.15 Basic Application Level Confidentiality Profile (header‑only subset).</p>
+                <p><strong>Pixel Data:</strong> Burned-in annotations are not detected automatically. Manually review each image for residual PHI.</p>
+                <p><strong>Private Tags:</strong> Private manufacturer tags are preserved unless you enable the “Strip private manufacturer tags” option above. Inspect as required.</p>
+            </div>
+            <div class="file-list" id="fileList"></div>
+        </section>
+
+        <!-- Help / About (IFU + OSS Licenses) -->
+        <section class="panel">
+            <details id="helpAboutPanel">
+                <summary class="section-title">Help & About</summary>
+                <div style="display:flex; flex-direction:column; gap:12px; color: var(--text-secondary); font-size: 13px;">
+                    <div>
+                        <h3 style="color: var(--text-primary); font-size:14px; margin:0 0 6px;">Instructions for Use (IFU)</h3>
+                        <p><strong>Purpose:</strong> Client-side tool to sort and optionally anonymize DICOM studies. Output is organized by day (D0, D1, …) and clusters using FrameOfReferenceUID (T1, T2, …) so CT and related RS/RP/RD import together and remain auto-registered.</p>
+                        <p><strong>Intended users:</strong> Research and clinical engineering staff familiar with DICOM handling. Not a medical device.</p>
+                        <p><strong>Supported browsers:</strong> Latest Chrome/Edge recommended. “Save to Folder” requires the File System Access API (Chromium-based).</p>
+
+                        <h4 style="margin:8px 0 4px; color: var(--text-primary);">Workflow</h4>
+                        <ol style="margin-left:16px;">
+                            <li>Open this HTML file in a supported browser.</li>
+                            <li>Click “Select Directory” or drop a folder of DICOMs into the drop zone.</li>
+                            <li>Review the <em>Planned Output (Preview)</em> on the left. It shows D/T folders and series with counts; RS/RP/RD display their identifiers.</li>
+                            <li>(Optional) Expand <em>Anonymization (optional)</em> and enable anonymization; configure patient fields if needed.</li>
+                            <li>Save: Choose “Save To Folder” (fast, streams individual files) or “Download Processed Files” (ZIP with progress).</li>
+                            <li>Verify images for visible PHI (burned-in text/overlays) before sharing.</li>
+                        </ol>
+
+                        <h4 style="margin:8px 0 4px; color: var(--text-primary);">Output structure</h4>
+                        <ul style="margin-left:16px;">
+                            <li>Folders: <code>D0/</code>, <code>D1/</code>, … by acquisition date; inside each, <code>T1-CT-RS/</code>, <code>T2-CT-RP-RD/</code>, etc. by shared FrameOfReferenceUID.</li>
+                            <li>Series subfolders: <code>SERIES_{SeriesNumber}_{Modality}/</code></li>
+                            <li>Filenames:
+                                <ul style="margin-left:16px;">
+                                    <li><code>RP(PLAN)_{PlanID}_{YYYYMMDD}_{HHMMSS}_{Seq}.dcm</code></li>
+                                    <li><code>RS(STRUCT)_{StructID}_{YYYYMMDD}_{HHMMSS}_{Seq}.dcm</code></li>
+                                    <li><code>RD(DOSE)_{AssocPlanID}_{YYYYMMDD}_{HHMMSS}_{Seq}.dcm</code></li>
+                                    <li><code>{MOD}_{YYYYMMDD}_{HHMMSS}_{Seq}.dcm</code> for other modalities</li>
+                                </ul>
+                            </li>
+                        </ul>
+
+                        <h4 style="margin:8px 0 4px; color: var(--text-primary);">Anonymization summary</h4>
+                        <ul style="margin-left:16px;">
+                            <li>Removes PHI from standard header tags aligned with DICOM PS3.15 Basic Application Level Confidentiality (header‑only subset); retains Type 2 elements as empty.</li>
+                            <li>Remaps Study/Series/SOP/FrameOfReference and referenced UIDs consistently; preserves SOP Class/Transfer Syntax UIDs.</li>
+                            <li>Optional: strip Private tags (odd groups).</li>
+                            <li><strong>Limitation:</strong> Pixel data not analyzed; burned-in PHI is not removed. Manual verification required.</li>
+                        </ul>
+
+                        <h4 style="margin:8px 0 4px; color: var(--text-primary);">Troubleshooting</h4>
+                        <ul style="margin-left:16px;">
+                            <li>Large studies: prefer “Save To Folder” to avoid huge ZIP buffers. Progress appears during save.</li>
+                            <li>Memory error (“Array buffer allocation failed”): use streaming save paths as above.</li>
+                            <li>“Save To Folder” missing: use Chrome/Edge (File System Access API required).</li>
+                            <li>No preview after selecting: ensure a directory was chosen and files are readable.</li>
+                        </ul>
+
+                        <p style="margin-top:6px;"><strong>Disclaimer:</strong> This tool is provided “as-is”, without warranty of any kind. Not intended for primary diagnosis, treatment decisions, or as a regulated medical device.</p>
+                    </div>
+
+                    <div>
+                        <h3 style="color: var(--text-primary); font-size:14px; margin:0 0 6px;">Open Source Licenses</h3>
+                        <p>The following third-party libraries are used under permissive licenses:</p>
+                        <details>
+                            <summary>dcmjs (MIT License)</summary>
+                            <pre class="tree-preview" style="white-space:pre-wrap; max-height:200px;">MIT License
+
+Copyright (c) dcmjs contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.</pre>
+                        </details>
+                        <details>
+                            <summary>dicom-parser (MIT License)</summary>
+                            <pre class="tree-preview" style="white-space:pre-wrap; max-height:200px;">MIT License
+
+Copyright (c) CornerstoneJS / dicom-parser contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.</pre>
+                        </details>
+                        <details>
+                            <summary>JSZip (MIT License)</summary>
+                            <pre class="tree-preview" style="white-space:pre-wrap; max-height:200px;">MIT License
+
+Copyright (c) JSZip contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.</pre>
+                        </details>
+                    </div>
+
+                    <div>
+                        <h4 style="margin:8px 0 4px; color: var(--text-primary);">Version & Credits</h4>
+                        <ul style="margin-left:16px;">
+                            <li>Tool: DICOM Sorter v1.1</li>
+                            <li>Libraries: dcmjs, dicom-parser, JSZip</li>
+                            <li>Processing: Client-side only; no data leaves your browser.</li>
+                        </ul>
+                    </div>
+                </div>
+            </details>
+        </section>
+
+        <div class="log-container" id="logContainer"></div>
+    </div>
+
+    <script>
+        const FIRST_NAMES = ['James', 'Mary', 'John', 'Patricia', 'Robert', 'Jennifer', 'Michael', 'Linda', 'William', 'Elizabeth'];
+        const LAST_NAMES = ['Smith', 'Johnson', 'Williams', 'Brown', 'Jones', 'Garcia', 'Miller', 'Davis', 'Rodriguez', 'Martinez'];
+
+        class DICOMProcessor {
+            constructor() {
+                this.files = [];
+                this.processedFiles = [];
+                this.zip = null;
+                this.isProcessing = false;
+                this.lastConfig = null;
+                this.totalOutputBytes = 0;
+                this.uidMapping = new Map(); // For consistent UID replacement
+                this.seriesMapping = new Map();
+                this.studyMapping = new Map();
+                this.studyPlan = null; // legacy plan (kept for compatibility)
+                this.dayFoRMapping = new Map(); // date+FoR -> base path
+                this.dayPlan = null; // structured preview plan for date+FoR buckets
+                this.fileCounter = 0; // Add counter for unique filenames
+                this.initializeEventListeners();
+                this.log('System initialized - DICOM Sorter v1.1', 'info');
+            }
+
+            initializeEventListeners() {
+                const fileUpload = document.getElementById('fileUpload');
+                const fileInput = document.getElementById('fileInput');
+                const directoryInput = document.getElementById('directoryInput');
+                const clearBtn = document.getElementById('clearBtn');
+                const downloadBtn = document.getElementById('downloadBtn');
+                const selectDirectoryBtn = document.getElementById('selectDirectoryBtn');
+                const saveToFolderBtn = document.getElementById('saveToFolderBtn');
+
+                fileUpload.addEventListener('click', () => this.triggerFileInput());
+                fileUpload.addEventListener('dragover', (e) => { e.preventDefault(); e.currentTarget.classList.add('dragover'); });
+                fileUpload.addEventListener('dragleave', (e) => { e.preventDefault(); e.currentTarget.classList.remove('dragover'); });
+                fileUpload.addEventListener('drop', (e) => { e.preventDefault(); e.currentTarget.classList.remove('dragover'); this.addFiles(Array.from(e.dataTransfer.files)); });
+                // fileInput intentionally unused; only directories supported
+                directoryInput.addEventListener('change', async (e) => {
+                    this.addFiles(Array.from(e.target.files));
+                    await this.previewPlanAfterSelection();
+                });
+
+                if (selectDirectoryBtn) {
+                    selectDirectoryBtn.addEventListener('click', () => {
+                        if ('webkitdirectory' in document.createElement('input')) {
+                            this.currentSelectionMode = 'directory';
+                            this.updateButtonStyles();
+                            directoryInput.click();
+                        } else {
+                            alert('Directory selection not supported in this browser.');
+                        }
+                    });
+                }
+
+                clearBtn.addEventListener('click', this.clearFiles.bind(this));
+                downloadBtn.addEventListener('click', this.downloadProcessedFiles.bind(this));
+                saveToFolderBtn.addEventListener('click', this.saveToFolder.bind(this));
+                
+                const enableAnonymization = document.getElementById('enableAnonymization');
+                const randomizeData = document.getElementById('randomizeData');
+                enableAnonymization.addEventListener('change', () => { randomizeData.disabled = !enableAnonymization.checked; });
+                
+                this.currentSelectionMode = 'directory';
+                this.updateButtonStyles();
+
+                // default sort to date on load
+                const sortSelect = document.getElementById('sortMethod');
+                if (sortSelect) sortSelect.value = 'date';
+
+                // Enable Save To Folder if File System Access API is available
+                if (typeof window.showDirectoryPicker === 'function') {
+                    saveToFolderBtn.style.display = 'inline-block';
+                }
+            }
+            
+            updateButtonStyles() {
+                const selectDirectoryBtn = document.getElementById('selectDirectoryBtn');
+                if (selectDirectoryBtn) {
+                    selectDirectoryBtn.classList.add('btn-primary');
+                }
+            }
+
+            triggerFileInput() {
+                document.getElementById('directoryInput').click();
+            }
+
+            addFiles(files) {
+                const processAllFiles = document.getElementById('processAllFiles').checked;
+                const validFiles = files.filter(file => {
+                    const isDicom = processAllFiles || file.name.toLowerCase().endsWith('.dcm') || 
+                                   file.name.toLowerCase().endsWith('.dicom') || 
+                                   file.type === 'application/dicom';
+                    return isDicom && file.size > 0;
+                });
+
+                this.files = [...this.files, ...validFiles];
+                this.updateUI();
+                this.log(`Added ${validFiles.length} DICOM files (${files.length - validFiles.length} filtered out)`, 'info');
+            }
+
+            async previewPlanAfterSelection() {
+                try {
+                    const cfg = this.getConfig();
+                    cfg.sortMethod = 'date';
+                    document.getElementById('progressContainer').style.display = 'block';
+                    this.updateProgress(0, 'Analyzing directory…');
+                    const queue = await this.buildProcessingQueue(cfg);
+                    this.previewQueue = queue;
+                    if (this.dayPlan) {
+                        this.renderTreePreview();
+                    }
+                    this.updateProgress(100, 'Ready');
+                    document.getElementById('progressContainer').style.display = 'none';
+                } catch (e) {
+                    this.log(`Preview generation failed: ${e.message}`, 'error');
+                }
+            }
+
+            updateUI() {
+                const fileUpload = document.getElementById('fileUpload');
+                if (this.files.length > 0) {
+                    fileUpload.querySelector('.upload-text').textContent = `${this.files.length} DICOM files selected`;
+                    fileUpload.querySelector('.upload-subtext').textContent = 'Preview generated and ready to save';
+                } else {
+                    fileUpload.querySelector('.upload-text').textContent = 'Drop DICOM files/folders here or click to browse';
+                    fileUpload.querySelector('.upload-subtext').textContent = 'Supports .dcm, .DCM files and directory selection';
+                }
+            }
+
+            async processFiles() {
+                if (this.files.length === 0 || this.isProcessing) return;
+
+                this.isProcessing = true;
+                this.updateUI();
+                document.getElementById('progressContainer').style.display = 'block';
+
+                this.zip = new JSZip();
+                this.processedFiles = [];
+                this.seriesMapping.clear();
+                this.studyMapping = new Map();
+                this.studyPlan = null;
+                this.uidMapping.clear();
+                this.fileCounter = 0;
+                this.totalOutputBytes = 0;
+
+                const config = this.getConfig();
+                this.lastConfig = config;
+                this.log(`Starting processing of ${this.files.length} files...`, 'info');
+
+                try {
+                    this.updateProgress(0, 'Preparing metadata order…');
+                    const queue = await this.buildProcessingQueue(config);
+                    this.previewQueue = queue;
+                    this.files = queue.map(entry => entry.file);
+                    const total = queue.length;
+
+                    // Render planned tree preview for date mode
+                    if (this.dayPlan && config.sortMethod === 'date') {
+                        this.renderTreePreview();
+                    }
+
+                    for (let i = 0; i < queue.length; i++) {
+                        const entry = queue[i];
+                        const progressMessage = `Processing ${i + 1}/${total} · ${entry.file.name}`;
+                        this.updateProgress((i / total) * 100, progressMessage);
+                        try {
+                            await this.processFile(entry, config, i, total);
+                            this.updateProgress(((i + 1) / total) * 100, progressMessage);
+                        } catch (error) {
+                            this.log(`✗ Error processing ${entry.file.name}: ${error.message}`, 'error');
+                            this.processedFiles.push({
+                                originalName: entry.file.name,
+                                status: 'error',
+                                error: error.message,
+                                sortIndex: i,
+                                total
+                            });
+                        }
+                    }
+
+                    this.updateProgress(100, 'Processing complete');
+                    this.showResults();
+                    document.getElementById('downloadBtn').style.display = 'inline-block';
+                } catch (error) {
+                    this.log(`A critical error occurred: ${error.message}`, 'error');
+                } finally {
+                    this.isProcessing = false;
+                    this.updateUI();
+                    document.getElementById('progressContainer').style.display = 'none';
+                }
+            }
+
+            async processFile(entry, config, index, total) {
+                const { file } = entry;
+                const arrayBuffer = await file.arrayBuffer();
+                let uint8Array = new Uint8Array(arrayBuffer);
+
+                this.fileCounter = index + 1;
+
+                const dataSet = dicomParser.parseDicom(uint8Array, { untilTag: 'x7FE00010' });
+                const metadata = entry.metadata || this.extractMetadata(dataSet, file.name, this.fileCounter);
+
+                if (config.enableAnonymization) {
+                    uint8Array = this.anonymizeDataset(uint8Array, config);
+                }
+
+                const anonymizedDataSet = dicomParser.parseDicom(uint8Array, { untilTag: 'x7FE00010' });
+                const finalMetadata = this.extractMetadata(anonymizedDataSet, file.name, this.fileCounter);
+                // carry forward labels/associations from pre-anon metadata
+                finalMetadata.rtPlanLabel = finalMetadata.rtPlanLabel || metadata.rtPlanLabel;
+                finalMetadata.structureSetLabel = finalMetadata.structureSetLabel || metadata.structureSetLabel;
+                finalMetadata.associatedPlanLabel = finalMetadata.associatedPlanLabel || entry.metadata.associatedPlanLabel || '';
+
+                const folder = this.determineFolderPath(finalMetadata, config, metadata);
+                const generatedFileName = this.generateFileName(finalMetadata);
+                const fullPath = `${folder}/${generatedFileName}`;
+
+                this.zip.folder(folder).file(generatedFileName, uint8Array);
+                this.totalOutputBytes += uint8Array.byteLength;
+
+                this.processedFiles.push({
+                    originalName: file.name,
+                    newPath: fullPath,
+                    status: 'success',
+                    sortIndex: index,
+                    total
+                });
+            }
+
+            async buildProcessingQueue(config) {
+                const queue = [];
+                const dayMap = new Map(); // date -> entries[]
+                const seenSOPs = new Set();
+                let dupCount = 0;
+
+                for (let index = 0; index < this.files.length; index++) {
+                    const file = this.files[index];
+                    let metadata;
+                    try {
+                        const arrayBuffer = await file.arrayBuffer();
+                        const dataSet = dicomParser.parseDicom(new Uint8Array(arrayBuffer), { untilTag: 'x7FE00010' });
+                        metadata = this.extractMetadata(dataSet, file.name, index + 1);
+                    } catch (error) {
+                        this.log(`⚠️ Metadata read failed for ${file.name}: ${error.message}`, 'error');
+                        metadata = this.createFallbackMetadata(file.name, index + 1);
+                    }
+                    // Duplicate detection by SOPInstanceUID (keep first occurrence)
+                    const sop = (metadata.sopInstanceUID || '').toString();
+                    if (sop && seenSOPs.has(sop)) {
+                        dupCount++;
+                        this.log(`Duplicate SOPInstanceUID detected (${sop}) — ignoring file: ${file.name}`, 'info');
+                        continue;
+                    }
+                    if (sop) seenSOPs.add(sop);
+
+                    const entry = { file, metadata };
+                    queue.push(entry);
+
+                    const date = metadata.acquisitionDate || '19700101';
+                    if (!dayMap.has(date)) dayMap.set(date, []);
+                    dayMap.get(date).push(entry);
+                }
+
+                if (dupCount > 0) {
+                    this.log(`Detected ${dupCount} duplicate instances (same SOPInstanceUID); kept first only.`, 'success');
+                }
+
+                // Map RT Plan SOPInstanceUID to plan label; annotate RD with associated plan label
+                const planLabelByUID = new Map();
+                for (const q of queue) {
+                    const m = q.metadata;
+                    if ((m.modality || '').toUpperCase() === 'RTPLAN' && m.sopInstanceUID && m.rtPlanLabel) {
+                        planLabelByUID.set(m.sopInstanceUID, m.rtPlanLabel);
+                    }
+                }
+                for (const q of queue) {
+                    const m = q.metadata;
+                    if ((m.modality || '').toUpperCase() === 'RTDOSE' && m.associatedPlanUID) {
+                        m.associatedPlanLabel = planLabelByUID.get(m.associatedPlanUID) || `PLAN_${(m.associatedPlanUID || '').slice(-6)}`;
+                    }
+                }
+
+                // Build date buckets with FrameOfReference clusters if sorting by date
+                if (config.sortMethod === 'date') {
+                    const datesSorted = Array.from(dayMap.keys()).sort();
+                    const planBuckets = [];
+                    this.dayFoRMapping = new Map();
+
+                    let dIdx = -1;
+                    const ordered = [];
+
+                    for (const date of datesSorted) {
+                        dIdx += 1;
+                        const entries = dayMap.get(date);
+                        // Build clusters by FrameOfReferenceUID (fallback to series)
+                        const clusterMap = new Map(); // key -> {key, modalities:Set, series:Map, files:[], forUID}
+                        for (const e of entries) {
+                            const forUID = (e.metadata.frameOfReferenceUID || '').toString();
+                            const key = forUID ? `FOR:${forUID}` : `SER:${e.metadata.seriesInstanceUID || 'UNKNOWN'}`;
+                            if (!clusterMap.has(key)) {
+                                clusterMap.set(key, {
+                                    key,
+                                    forUID: forUID || null,
+                                    modalities: new Set(),
+                                    series: new Map(),
+                                    files: []
+                                });
+                            }
+                            const cluster = clusterMap.get(key);
+                            const mod = this.abbrevModality(e.metadata.modality);
+                            cluster.modalities.add(mod);
+                            const sUID = e.metadata.seriesInstanceUID || `SER_${e.metadata.fileCounter}`;
+                            if (!cluster.series.has(sUID)) {
+                                cluster.series.set(sUID, {
+                                    seriesUID: sUID,
+                                    seriesDescription: e.metadata.seriesDescription,
+                                    seriesNumber: e.metadata.seriesNumber,
+                                    modality: mod,
+                                    count: 0
+                                });
+                            }
+                            cluster.series.get(sUID).count++;
+                            cluster.files.push(e);
+                        }
+
+                        // Sort clusters deterministically by key
+                        const clusters = Array.from(clusterMap.values()).sort((a, b) => (a.key).localeCompare(b.key));
+                        const clusterPlans = [];
+                        for (let i = 0; i < clusters.length; i++) {
+                            const tIndex = i + 1;
+                            const cluster = clusters[i];
+                            const modalities = Array.from(cluster.modalities).sort();
+                            const cue = modalities.join('-');
+                            const tLabel = `T${tIndex}-${cue}`;
+                            const basePath = `D${dIdx}/${tLabel}`;
+
+                            // Save mapping for folder resolution
+                            this.dayFoRMapping.set(`${date}:${cluster.key}`, basePath);
+                            clusterPlans.push({
+                                tIndex,
+                                tLabel,
+                                date,
+                                modalities,
+                                series: Array.from(cluster.series.values())
+                            });
+
+                            // Push files in consistent order (series then instance)
+                            cluster.files.sort((a, b) => {
+                                const sa = `${a.metadata.seriesNumber || ''}`.padStart(6, '0') + `${a.metadata.instanceNumber || ''}`.padStart(6, '0');
+                                const sb = `${b.metadata.seriesNumber || ''}`.padStart(6, '0') + `${b.metadata.instanceNumber || ''}`.padStart(6, '0');
+                                return sa.localeCompare(sb);
+                            });
+                            ordered.push(...cluster.files);
+                        }
+
+                        planBuckets.push({ dIndex: dIdx, dLabel: `D${dIdx}`, date, clusters: clusterPlans });
+                    }
+
+                    this.dayPlan = { buckets: planBuckets };
+                    return ordered;
+                }
+
+                // Non-date sorting: fallback to previous comparator
+                const comparator = this.getSortComparator(config.sortMethod);
+                queue.sort((a, b) => {
+                    const result = comparator(a.metadata, b.metadata);
+                    if (result !== 0) return result;
+                    return a.file.name.localeCompare(b.file.name, undefined, { sensitivity: 'base' });
+                });
+                return queue;
+            }
+
+            getSortComparator(sortMethod) {
+                const compareAlpha = (a, b) => {
+                    if (!a && !b) return 0;
+                    if (!a) return 1;
+                    if (!b) return -1;
+                    return a.toString().localeCompare(b.toString(), undefined, { sensitivity: 'base', numeric: true });
+                };
+
+                const compareNumeric = (a, b) => {
+                    const numA = Number.parseFloat(a);
+                    const numB = Number.parseFloat(b);
+                    if (Number.isNaN(numA) && Number.isNaN(numB)) return 0;
+                    if (Number.isNaN(numA)) return 1;
+                    if (Number.isNaN(numB)) return -1;
+                    return numA - numB;
+                };
+
+                switch (sortMethod) {
+                    case 'time':
+                        return (a, b) => compareAlpha(`${a.acquisitionDate}${a.acquisitionTime}`, `${b.acquisitionDate}${b.acquisitionTime}`);
+                    case 'series':
+                        return (a, b) => {
+                            const primary = compareAlpha(a.seriesDescription, b.seriesDescription);
+                            if (primary !== 0) return primary;
+                            return compareNumeric(a.seriesNumber, b.seriesNumber);
+                        };
+                    case 'modality':
+                        return (a, b) => compareAlpha(a.modality, b.modality);
+                    case 'date':
+                        return (a, b) => compareAlpha(a.acquisitionDate, b.acquisitionDate);
+                    default:
+                        return () => 0;
+                }
+            }
+
+            abbrevModality(modality) {
+                const m = (modality || 'IMG').toString().toUpperCase();
+                const map = {
+                    'CT': 'CT', 'MR': 'MR', 'US': 'US', 'XA': 'XA', 'RF': 'RF', 'DX': 'DX', 'CR': 'CR', 'MG': 'MG',
+                    'PT': 'PT', 'NM': 'NM', 'RTPLAN': 'RP', 'RTSTRUCT': 'RS', 'RTDOSE': 'RD', 'RTIMAGE': 'RI',
+                    'REG': 'REG', 'SR': 'SR', 'KO': 'KO', 'PR': 'PR', 'RTRECORD': 'RR',
+                    'COMPUTED TOMOGRAPHY': 'CT', 'MAGNETIC RESONANCE': 'MR', 'ULTRASOUND': 'US'
+                };
+                return map[m] || m;
+            }
+
+            createFallbackMetadata(originalFileName, fileCounter = 0) {
+                return {
+                    patientId: '',
+                    patientName: '',
+                    studyInstanceUID: `FallbackStudy_${fileCounter}`,
+                    seriesInstanceUID: `FallbackSeries_${fileCounter}`,
+                    acquisitionDate: '19700101',
+                    acquisitionTime: '000000',
+                    frameOfReferenceUID: '',
+                    modality: 'IMG',
+                    seriesDescription: `Series${fileCounter}`,
+                    seriesNumber: fileCounter.toString(),
+                    instanceNumber: fileCounter.toString(),
+                    originalFileName,
+                    fileCounter
+                };
+            }
+
+            extractMetadata(dataSet, originalFileName = '', fileCounter = 0) {
+                const getString = (tag) => {
+                    try {
+                        return dataSet.string(tag) || '';
+                    } catch (e) {
+                        return '';
+                    }
+                };
+                const getRefPlanUID = () => {
+                    try {
+                        const el = dataSet.elements && dataSet.elements['x300c0002']; // Referenced RT Plan Sequence
+                        if (el && el.items && el.items.length > 0 && el.items[0].dataSet) {
+                            return el.items[0].dataSet.string('x00081155') || '';
+                        }
+                    } catch (_) {}
+                    return '';
+                };
+                
+                // Extract basic metadata with fallbacks
+                const acquisitionDate = getString('x00080022') || getString('x00080021') || getString('x00080020') || '19700101';
+                const acquisitionTime = getString('x00080032') || getString('x00080031') || getString('x00080030') || '000000';
+                const frameOfReferenceUID = getString('x00200052') || '';
+                const sopInstanceUID = getString('x00080018') || '';
+                const rtPlanLabel = getString('x300a0002') || getString('x300a0003') || '';
+                const structureSetLabel = getString('x30060002') || getString('x30060004') || '';
+                const associatedPlanUID = getRefPlanUID();
+                
+                // Enhanced modality detection with filename fallback
+                let modality = getString('x00080060');
+                
+                // If no modality found in DICOM header, try to extract from filename
+                if (!modality) {
+                    const filenameLower = originalFileName.toLowerCase();
+                    if (filenameLower.startsWith('ct.') || filenameLower.includes('ct_')) {
+                        modality = 'CT';
+                    } else if (filenameLower.startsWith('mr.') || filenameLower.includes('mr_')) {
+                        modality = 'MR';
+                    } else if (filenameLower.startsWith('rp.') || filenameLower.includes('rtplan')) {
+                        modality = 'RTPLAN';
+                    } else if (filenameLower.startsWith('rs.') || filenameLower.includes('rtstruct')) {
+                        modality = 'RTSTRUCT';
+                    } else if (filenameLower.startsWith('rd.') || filenameLower.includes('rtdose')) {
+                        modality = 'RTDOSE';
+                    } else if (filenameLower.startsWith('ri.') || filenameLower.includes('rtimage')) {
+                        modality = 'RTIMAGE';
+                    } else if (filenameLower.startsWith('us.') || filenameLower.includes('ultrasound')) {
+                        modality = 'US';
+                    } else if (filenameLower.startsWith('pt.') || filenameLower.includes('pet')) {
+                        modality = 'PT';
+                    } else {
+                        modality = 'IMG'; // Final fallback
+                    }
+                    
+                    // Log the fallback detection for debugging
+                    console.log(`Modality detection: DICOM header empty, using filename fallback: ${originalFileName} → ${modality}`);
+                } else {
+                    console.log(`Modality detection: Found in DICOM header: ${modality}`);
+                }
+                
+                const seriesDescription = getString('x0008103e') || `Series${getString('x00200011') || fileCounter}`;
+                const seriesNumber = getString('x00200011') || fileCounter.toString();
+                const instanceNumber = getString('x00200013') || fileCounter.toString();
+                
+                // Generate unique series UID if missing
+                const seriesInstanceUID = getString('x0020000e') || `${originalFileName}_${fileCounter}`;
+                
+                return {
+                    patientId: getString('x00100020'),
+                    patientName: getString('x00100010'),
+                    studyInstanceUID: getString('x0020000d'),
+                    seriesInstanceUID: seriesInstanceUID,
+                    acquisitionDate: acquisitionDate,
+                    acquisitionTime: acquisitionTime,
+                    frameOfReferenceUID: frameOfReferenceUID,
+                    sopInstanceUID: sopInstanceUID,
+                    modality: modality,
+                    seriesDescription: seriesDescription,
+                    seriesNumber: seriesNumber,
+                    instanceNumber: instanceNumber,
+                    rtPlanLabel: rtPlanLabel,
+                    structureSetLabel: structureSetLabel,
+                    associatedPlanUID: associatedPlanUID,
+                    originalFileName: originalFileName,
+                    fileCounter: fileCounter
+                };
+            }
+            
+            // Enhanced anonymization function for DICOM PS3.15 compliance
+            anonymizeDataset(uint8Array, config) {
+                try {
+                    const dicomMessage = dcmjs.data.DicomMessage.readFile(uint8Array.buffer);
+                    const dataset = dicomMessage.dict;
+                    const dictionary = dcmjs.data.DicomMetaDictionary;
+
+                    const finalConfig = this.generateRandomDataIfNeeded(config);
+                    const normalizedBirthDate = finalConfig.birthDate.replace(/-/g, '');
+
+                    // Replace core patient demographics
+                    dataset[dictionary.nameMap.PatientName.tag] = { vr: 'PN', Value: [finalConfig.patientName] };
+                    dataset[dictionary.nameMap.PatientID.tag] = { vr: 'LO', Value: [finalConfig.patientId] };
+                    dataset[dictionary.nameMap.PatientBirthDate.tag] = { vr: 'DA', Value: [normalizedBirthDate] };
+
+                    // Walk entire dataset and replace UIDs consistently
+                    this.replaceUIDs(dataset, dictionary);
+
+                    // Update File Meta UIDs when present
+                    if (dicomMessage.meta) {
+                        const mediaStorageTag = '00020003';
+                        if (dicomMessage.meta[mediaStorageTag]?.Value?.[0]) {
+                            dicomMessage.meta[mediaStorageTag].Value[0] = this.normalizeUID(
+                                dicomMessage.meta[mediaStorageTag].Value[0]
+                            );
+                        }
+                    }
+
+                    // Remove or clear PHI-bearing attributes
+                    this.scrubPHITags(dataset, dictionary, config);
+
+                    // Stamp anonymization metadata
+                    const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+                    dataset[dictionary.nameMap.PatientIdentityRemoved.tag] = { vr: 'CS', Value: ['YES'] };
+                    dataset[dictionary.nameMap.DeidentificationMethod.tag] = {
+                        vr: 'LO',
+                        Value: ['PS3.15‑aligned header de‑identification v1.1']
+                    };
+                    dataset[dictionary.nameMap.DeidentificationMethodCodeSequence.tag] = {
+                        vr: 'SQ',
+                        Value: [{
+                            '00080100': { vr: 'SH', Value: ['113100'] },
+                            '00080102': { vr: 'SH', Value: ['DCM'] },
+                            '00080104': { vr: 'LO', Value: ['Basic Application Level Confidentiality Profile (aligned)'] }
+                        }]
+                    };
+                    const ltim = dictionary.nameMap.LongitudinalTemporalInformationModified;
+                    if (ltim) {
+                        dataset[ltim.tag] = { vr: ltim.vr || 'CS', Value: ['MODIFIED'] };
+                    }
+                    const burnedIn = dictionary.nameMap.BurnedInAnnotation;
+                    if (burnedIn) {
+                        dataset[burnedIn.tag] = { vr: burnedIn.vr || 'CS', Value: ['NO'] };
+                    }
+                    const lossy = dictionary.nameMap.LossyImageCompression;
+                    if (lossy) {
+                        dataset[lossy.tag] = { vr: lossy.vr || 'CS', Value: ['00'] };
+                    }
+                    const instanceDate = dictionary.nameMap.InstanceCreationDate;
+                    const instanceTime = dictionary.nameMap.InstanceCreationTime;
+                    const now = new Date();
+                    const cleanTime = now.toISOString().slice(11, 19).replace(/:/g, '');
+                    if (instanceDate) {
+                        dataset[instanceDate.tag] = { vr: instanceDate.vr || 'DA', Value: [today] };
+                    }
+                    if (instanceTime) {
+                        dataset[instanceTime.tag] = { vr: instanceTime.vr || 'TM', Value: [cleanTime] };
+                    }
+
+                    const buffer = dicomMessage.write();
+                    return new Uint8Array(buffer);
+                } catch (error) {
+                    this.log(`Anonymization failed: ${error.message}. Returning original file.`, 'error');
+                    return uint8Array;
+                }
+            }
+
+            replaceUIDs(dataset, dictionary) {
+                // Targeted list of UIDs to remap while preserving SOP Class/TransferSyntax/etc.
+                const TAGS_TO_REPLACE = new Set([
+                    '00080018', // SOPInstanceUID
+                    '0020000D', // StudyInstanceUID
+                    '0020000E', // SeriesInstanceUID
+                    '00200052', // FrameOfReferenceUID
+                    '00209552', // FrameOfReferenceUID (Enhanced)
+                    '00081155', // ReferencedSOPInstanceUID
+                    '00200052'  // ensure duplication ok
+                ]);
+
+                const walk = (node) => {
+                    if (!node || typeof node !== 'object') return;
+                    for (const tag of Object.keys(node)) {
+                        const el = node[tag];
+                        if (!el) continue;
+                        if (el.vr === 'SQ' && Array.isArray(el.Value)) {
+                            el.Value.forEach(item => walk(item));
+                            continue;
+                        }
+                        if (el.vr === 'UI' && Array.isArray(el.Value) && TAGS_TO_REPLACE.has(tag)) {
+                            el.Value = el.Value.map(uid => this.normalizeUID(uid));
+                        }
+                    }
+                };
+
+                walk(dataset);
+            }
+
+            normalizeUID(uid) {
+                if (!uid || typeof uid !== 'string') return uid;
+                if (this.uidMapping.has(uid)) {
+                    return this.uidMapping.get(uid);
+                }
+                const newUID = this.generateNewUID();
+                this.uidMapping.set(uid, newUID);
+                return newUID;
+            }
+
+            scrubPHITags(dataset, dictionary, config) {
+                const tagsToRemove = [
+                    'OtherPatientIDs', 'OtherPatientNames', 'PatientBirthName', 'PatientAddress', 'PatientTelephoneNumbers',
+                    'PatientMotherBirthName', 'EthnicGroup', 'Occupation', 'AdditionalPatientHistory',
+                    'MedicalRecordLocator', 'MilitaryRank', 'BranchOfService', 'PatientReligiousPreference',
+                    'ResponsiblePerson', 'ResponsiblePersonRole', 'ResponsibleOrganization', 'IssuerOfAdmissionID',
+                    'AccessionNumber', 'StudyID', 'RequestedProcedureID', 'ScheduledProcedureStepID',
+                    'PerformedProcedureStepID', 'RequestedProcedureComments', 'PerformedProcedureStepDescription',
+                    'RequestedProcedureDescription', 'ScheduledProcedureStepDescription', 'RequestingService',
+                    'ReferringPhysicianName', 'ReferringPhysicianTelephoneNumbers', 'ReferringPhysicianAddress',
+                    'PhysiciansOfRecord', 'NameOfPhysiciansReadingStudy', 'PerformingPhysicianName',
+                    'OperatorsName', 'OperatorsIdentificationSequence', 'RequestingPhysician',
+                    'PersonIdentificationCodeSequence', 'PatientInsurancePlanCodeSequence',
+                    'IssuerOfPatientID', 'IssuerOfPatientIDQualifiersSequence', 'AdmittingDiagnosesDescription',
+                    'StudyComments', 'SeriesComments', 'ImageComments', 'VisitComments',
+                    'DerivationDescription', 'ImagePresentationComments', 'CommentsOnThePerformedProcedureStep',
+                    'RequestedContrastAgent', 'ClinicalTrialProtocolID', 'ClinicalTrialProtocolName',
+                    'InstitutionName', 'InstitutionAddress', 'InstitutionalDepartmentName', 'StationName',
+                    'DeviceSerialNumber', 'ProtocolName', 'PerformedStationName', 'PerformedLocation',
+                    'ManufacturerModelName', 'SoftwareVersions', 'StudyDescription', 'SeriesDescription'
+                ];
+
+                tagsToRemove.forEach(name => {
+                    const tagInfo = dictionary.nameMap[name];
+                    if (tagInfo && dataset[tagInfo.tag]) {
+                        delete dataset[tagInfo.tag];
+                    }
+                });
+
+                const tagsToBlank = [
+                    'PatientSex', 'PatientAge', 'PatientSize', 'PatientWeight', 'StudyDate', 'StudyTime',
+                    'SeriesDate', 'SeriesTime', 'AcquisitionDate', 'AcquisitionTime', 'ContentDate', 'ContentTime',
+                    'InstanceCreationDate', 'InstanceCreationTime', 'PatientBirthTime'
+                ];
+
+                tagsToBlank.forEach(name => {
+                    const tagInfo = dictionary.nameMap[name];
+                    if (tagInfo && dataset[tagInfo.tag]) {
+                        dataset[tagInfo.tag].Value = [''];
+                    }
+                });
+
+                if (config.removePrivateTags) {
+                    this.removePrivateTags(dataset);
+                }
+            }
+
+            removePrivateTags(dataset) {
+                const cleanse = (container) => {
+                    Object.keys(container).forEach(tag => {
+                        const groupHex = tag.slice(0, 4);
+                        const groupNumber = parseInt(groupHex, 16);
+                        const element = container[tag];
+
+                        if (!Number.isNaN(groupNumber) && (groupNumber % 2 === 1)) {
+                            delete container[tag];
+                            return;
+                        }
+
+                        if (element?.vr === 'SQ' && Array.isArray(element.Value)) {
+                            element.Value.forEach(item => {
+                                if (item && typeof item === 'object') {
+                                    cleanse(item);
+                                }
+                            });
+                        }
+                    });
+                };
+
+                cleanse(dataset);
+            }
+
+            // Generate 2.25 root UID using 128-bit random number
+            generateNewUID() {
+                const bytes = new Uint8Array(16);
+                const cryptoSource = (typeof crypto !== 'undefined' && crypto.getRandomValues)
+                    ? crypto
+                    : null;
+                if (cryptoSource) {
+                    cryptoSource.getRandomValues(bytes);
+                } else {
+                    for (let i = 0; i < bytes.length; i++) {
+                        bytes[i] = Math.floor(Math.random() * 256);
+                    }
+                }
+                let value = 0n;
+                for (const byte of bytes) {
+                    value = (value << 8n) | BigInt(byte);
+                }
+                return `2.25.${value}`;
+            }
+            
+            generateRandomDataIfNeeded(config) {
+                const randomizeData = config.randomizeData;
+
+                return {
+                    patientId: config.patientId || (randomizeData ? this.generateRandomPatientId() : 'ANON'),
+                    patientName: config.patientName || (randomizeData ? this.generateRandomName() : 'ANONYMOUS^PATIENT'),
+                    birthDate: config.birthDate || (randomizeData ? this.generateRandomBirthDate() : '19000101')
+                };
+            }
+
+            generateRandomPatientId() {
+                const prefix = 'ANON';
+                const randomNum = Math.floor(Math.random() * 9000) + 1000;
+                return `${prefix}${randomNum}`;
+            }
+
+            generateRandomName() {
+                const firstName = FIRST_NAMES[Math.floor(Math.random() * FIRST_NAMES.length)];
+                const lastName = LAST_NAMES[Math.floor(Math.random() * LAST_NAMES.length)];
+                return `${lastName}^${firstName}`;
+            }
+
+            generateRandomBirthDate() {
+                const currentYear = new Date().getFullYear();
+                const randomYear = currentYear - Math.floor(Math.random() * 80) - 20;
+                const randomMonth = String(Math.floor(Math.random() * 12) + 1).padStart(2, '0');
+                const randomDay = String(Math.floor(Math.random() * 28) + 1).padStart(2, '0');
+                return `${randomYear}-${randomMonth}-${randomDay}`;
+            }
+
+            determineFolderPath(metadata, config, preMetadata = null) {
+                const sanitize = (value, fallback = 'UNSPECIFIED') => {
+                    const cleaned = (value || '').toString().trim().replace(/[^A-Za-z0-9._-]/g, '_').replace(/_+/g, '_').replace(/^_+|_+$/g, '');
+                    return cleaned || fallback;
+                };
+                const seriesUID = metadata.seriesInstanceUID || `UnknownSeries_${metadata.fileCounter}`;
+                const studyUIDPre = preMetadata?.studyInstanceUID || metadata.studyInstanceUID;
+
+                if (this.seriesMapping.has(seriesUID)) {
+                    return this.seriesMapping.get(seriesUID);
+                }
+
+                let basePath;
+                if (config.sortMethod === 'date') {
+                    const date = metadata.acquisitionDate || '19700101';
+                    const forUID = (metadata.frameOfReferenceUID || '').toString();
+                    const clusterKey = forUID ? `FOR:${forUID}` : `SER:${metadata.seriesInstanceUID || 'UNKNOWN'}`;
+                    basePath = this.dayFoRMapping.get(`${date}:${clusterKey}`);
+                    if (!basePath) basePath = `D0/T1-${this.abbrevModality(metadata.modality)}`;
+                } else {
+                    // Neutral series grouping
+                    const index = this.seriesMapping.size + 1;
+                    const paddedIndex = index.toString().padStart(3, '0');
+                    const modality = (metadata.modality || 'IMG').toUpperCase();
+                    let qualifier = '';
+                    switch (config.sortMethod) {
+                        case 'modality':
+                            qualifier = sanitize(modality);
+                            break;
+                        case 'series':
+                            qualifier = sanitize(metadata.seriesNumber || metadata.seriesDescription, `SER${paddedIndex}`);
+                            break;
+                        case 'time':
+                            qualifier = sanitize(`${metadata.acquisitionDate}${metadata.acquisitionTime}`, 'TIME');
+                            break;
+                        default:
+                            qualifier = sanitize(modality);
+                            break;
+                    }
+                    basePath = `SERIES_${paddedIndex}_${qualifier}`;
+                }
+
+                // Series subfolder
+                const seriesLabel = `SERIES_${sanitize(metadata.seriesNumber || metadata.fileCounter || '0', 'SER')}_${this.abbrevModality(metadata.modality)}`;
+                const full = `${basePath}/${seriesLabel}`;
+                this.seriesMapping.set(seriesUID, full);
+                return full;
+            }
+
+            generateFileName(metadata) {
+                // Normalize modality
+                let modality = metadata.modality || 'IMG';
+                const modalityMap = {
+                    'CT': 'CT', 'MR': 'MR', 'US': 'US', 'XA': 'XA', 'RF': 'RF', 'DX': 'DX', 'CR': 'CR', 'MG': 'MG',
+                    'PT': 'PT', 'NM': 'NM', 'RTPLAN': 'RP', 'RTSTRUCT': 'RS', 'RTDOSE': 'RD', 'RTIMAGE': 'RI',
+                    'REG': 'REG', 'SR': 'SR', 'KO': 'KO', 'PR': 'PR', 'RTRECORD': 'RR',
+                    'COMPUTED TOMOGRAPHY': 'CT', 'MAGNETIC RESONANCE': 'MR', 'ULTRASOUND': 'US'
+                };
+                modality = modalityMap[modality.toUpperCase()] || modality.toUpperCase();
+
+                const date = (metadata.acquisitionDate || '19700101');
+                const timeRaw = (metadata.acquisitionTime || '000000');
+                const time = timeRaw.toString().replace(/[^0-9]/g, '').padEnd(6, '0').slice(0, 6);
+
+                const instanceNum = metadata.instanceNumber || metadata.fileCounter || '0';
+                const paddedSeq = instanceNum.toString().padStart(4, '0');
+
+                const sanitizeToken = (val, max = 32) => {
+                    const s = (val || '').toString().trim().replace(/[^A-Za-z0-9._-]/g, '_').replace(/_+/g, '_');
+                    return s.substring(0, max) || 'NA';
+                };
+
+                // Determine (type) and ID segment for RT objects
+                let typeSeg = '';
+                let idSeg = '';
+                if (modality === 'RP') {
+                    typeSeg = '(PLAN)';
+                    const planId = metadata.rtPlanLabel || '';
+                    idSeg = planId ? `_${sanitizeToken(planId)}` : '';
+                } else if (modality === 'RS') {
+                    typeSeg = '(STRUCT)';
+                    const structId = metadata.structureSetLabel || '';
+                    idSeg = structId ? `_${sanitizeToken(structId)}` : '';
+                } else if (modality === 'RD') {
+                    typeSeg = '(DOSE)';
+                    const assocPlan = metadata.associatedPlanLabel || '';
+                    idSeg = assocPlan ? `_${sanitizeToken(assocPlan)}` : '';
+                }
+
+                // Patterns:
+                //  - RP(type)_ID_Date_Time_sequence.dcm
+                //  - RS(type)_ID_Date_Time_sequence.dcm
+                //  - RD(type)_ID_Date_Time_sequence.dcm
+                //  - Others: MOD_Date_Time_sequence.dcm
+                if (modality === 'RP' || modality === 'RS' || modality === 'RD') {
+                    return `${modality}${typeSeg}${idSeg}_${date}_${time}_${paddedSeq}.dcm`;
+                }
+                return `${modality}_${date}_${time}_${paddedSeq}.dcm`;
+            }
+
+            updateProgress(percentage, message) {
+                const progressBar = document.getElementById('progressBar');
+                const progressText = document.getElementById('progressText');
+                
+                progressBar.style.width = `${Math.min(100, Math.max(0, percentage))}%`;
+                progressText.textContent = `${Math.round(Math.min(100, Math.max(0, percentage)))}% · ${message}`;
+            }
+
+            showResults() {
+                const results = document.getElementById('results');
+                const fileList = document.getElementById('fileList');
+                const successCount = this.processedFiles.filter(f => f.status === 'success').length;
+                document.getElementById('resultsMessage').textContent = `Processed ${successCount} of ${this.files.length} files.`;
+                const orderedFiles = [...this.processedFiles].sort((a, b) => {
+                    const aIndex = Number.isFinite(a.sortIndex) ? a.sortIndex : Number.MAX_SAFE_INTEGER;
+                    const bIndex = Number.isFinite(b.sortIndex) ? b.sortIndex : Number.MAX_SAFE_INTEGER;
+                    return aIndex - bIndex;
+                });
+
+                fileList.innerHTML = orderedFiles.map(file => `
+                    <div class="file-item">
+                        <div class="file-info">
+                            <div class="file-name">${file.originalName}</div>
+                            <div class="file-meta">${file.newPath ? `→ ${file.newPath}` : `⚠️ ${file.error || 'Processing error'}`}</div>
+                        </div>
+                        <div class="status ${file.status}">${file.status}</div>
+                    </div>
+                `).join('');
+                results.style.display = 'block';
+
+                // Show the PHI warning message
+                if (this.lastConfig?.enableAnonymization) {
+                    document.getElementById('phiWarning').style.display = 'block';
+                } else {
+                    document.getElementById('phiWarning').style.display = 'none';
+                }
+            }
+            
+            async downloadProcessedFiles() {
+                try {
+                    if (!this.zip || Object.keys(this.zip.files || {}).length === 0) {
+                        await this.processFiles();
+                    }
+                    const suggestedName = `anonymized_dicom_${new Date().toISOString().slice(0,10)}.zip`;
+                    document.getElementById('progressContainer').style.display = 'block';
+                    const streamSaved = await this.tryStreamDownload(this.zip, suggestedName, 'Processed dataset');
+
+                    if (!streamSaved) {
+                        const content = await this.zip.generateAsync({
+                            type: 'blob',
+                            compression: 'DEFLATE',
+                            compressionOptions: { level: 6 },
+                            streamFiles: true
+                        }, (meta) => {
+                            const pct = Math.max(0, Math.min(100, meta.percent || 0));
+                            this.updateProgress(pct, `Saving ZIP (${Math.round(pct)}%) · ${meta.currentFile || ''}`);
+                        });
+                        const link = document.createElement('a');
+                        const url = URL.createObjectURL(content);
+                        link.href = url;
+                        link.download = suggestedName;
+                        document.body.appendChild(link);
+                        link.click();
+                        document.body.removeChild(link);
+                        URL.revokeObjectURL(url);
+                    }
+
+                    this.log('Downloaded DICOM files successfully.', 'success');
+                    document.getElementById('progressContainer').style.display = 'none';
+                } catch (error) {
+                    this.log(`Download failed: ${error.message}`, 'error');
+                    document.getElementById('progressContainer').style.display = 'none';
+                }
+            }
+
+            // Binary backup removed per user request
+
+            async tryStreamDownload(zipInstance, suggestedName, label) {
+                const supportsFilePicker = typeof window.showSaveFilePicker === 'function' && typeof zipInstance.generateInternalStream === 'function';
+                if (!supportsFilePicker) {
+                    return false;
+                }
+
+                try {
+                    const handle = await window.showSaveFilePicker({
+                        suggestedName,
+                        types: [{
+                            description: 'ZIP archive',
+                            accept: { 'application/zip': ['.zip'] }
+                        }]
+                    });
+
+                    const writable = await handle.createWritable();
+                    const streamHelper = zipInstance.generateInternalStream({
+                        type: 'uint8array',
+                        streamFiles: true,
+                        compression: 'DEFLATE',
+                        compressionOptions: { level: 6 }
+                    });
+
+                    let savedBytes = 0;
+                    const totalBytes = Math.max(1, this.totalOutputBytes);
+                    await new Promise((resolve, reject) => {
+                        let writeChain = Promise.resolve();
+
+                        streamHelper.on('data', (chunk) => {
+                            streamHelper.pause();
+                            writeChain = writeChain
+                                .then(() => writable.write(chunk))
+                                .then(() => {
+                                    savedBytes += chunk.length || chunk.byteLength || 0;
+                                    const pct = Math.min(99, Math.floor((savedBytes / totalBytes) * 100));
+                                    this.updateProgress(pct, `Saving ZIP (stream) · ${((savedBytes/1048576)).toFixed(1)} / ${((totalBytes/1048576)).toFixed(1)} MB`);
+                                })
+                                .then(() => streamHelper.resume())
+                                .catch(reject);
+                        });
+
+                        streamHelper.on('end', () => {
+                            writeChain
+                                .then(() => writable.close())
+                                .then(resolve)
+                                .catch(reject);
+                        });
+
+                        streamHelper.on('error', reject);
+                        streamHelper.resume();
+                    });
+
+                    this.log(`${label} saved via direct stream to disk.`, 'success');
+                    return true;
+                } catch (error) {
+                    this.log(`${label} streaming fallback unavailable: ${error.message}`, 'error');
+                    return false;
+                }
+            }
+
+            async saveToFolder() {
+                if (!this.zip || Object.keys(this.zip.files || {}).length === 0) {
+                    await this.processFiles();
+                }
+                if (typeof window.showDirectoryPicker !== 'function') {
+                    alert('Saving to a folder is not supported in this browser.');
+                    return;
+                }
+
+                try {
+                    const dirHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
+                    document.getElementById('progressContainer').style.display = 'block';
+
+                    const entries = Object.values(this.zip.files).filter(f => !f.dir);
+                    let savedBytes = 0;
+                    const totalBytes = this.totalOutputBytes || entries.length;
+
+                    for (let i = 0; i < entries.length; i++) {
+                        const entry = entries[i];
+                        const path = entry.name;
+                        const segments = path.split('/');
+                        const filename = segments.pop();
+
+                        // Create folder structure
+                        let current = dirHandle;
+                        for (const seg of segments) {
+                            if (!seg) continue;
+                            current = await current.getDirectoryHandle(seg, { create: true });
+                        }
+
+                        const fileHandle = await current.getFileHandle(filename, { create: true });
+                        const writable = await fileHandle.createWritable();
+                        const data = await entry.async('uint8array');
+                        await writable.write(data);
+                        await writable.close();
+
+                        savedBytes += data.byteLength || data.length || 0;
+                        const pct = Math.max(0, Math.min(100, Math.floor((savedBytes / totalBytes) * 100)));
+                        this.updateProgress(pct, `Writing files ${i + 1}/${entries.length} · ${((savedBytes/1048576)).toFixed(1)} MB`);
+                    }
+
+                    this.updateProgress(100, 'All files saved to folder');
+                    this.log('Saved files directly to folder successfully.', 'success');
+                    // Try to open the folder picker focused on the saved directory as a workaround
+                    try {
+                        await window.showDirectoryPicker({ mode: 'read', startIn: dirHandle });
+                    } catch (e) {
+                        this.log('Auto-opening folder is restricted by the browser.', 'info');
+                    }
+                } catch (error) {
+                    this.log(`Save to folder failed: ${error.message}`, 'error');
+                } finally {
+                    document.getElementById('progressContainer').style.display = 'none';
+                }
+            }
+            
+            clearFiles() {
+                if (this.isProcessing) return;
+                this.files = [];
+                this.processedFiles = [];
+                this.zip = null;
+                this.lastConfig = null;
+                this.studyPlan = null;
+                this.studyMapping = new Map();
+                this.dayPlan = null;
+                this.dayFoRMapping = new Map();
+                document.getElementById('results').style.display = 'none';
+                document.getElementById('downloadBtn').style.display = 'none';
+                document.getElementById('phiWarning').style.display = 'none'; // Hide warning on clear
+                const previewPanel = document.getElementById('previewPanel');
+                if (previewPanel) previewPanel.style.display = 'none';
+                this.updateUI();
+                this.log('All files and data cleared.', 'info');
+            }
+            
+            getConfig() {
+                return {
+                    patientId: document.getElementById('patientId').value.trim(),
+                    patientName: document.getElementById('patientName').value.trim(),
+                    birthDate: document.getElementById('birthDate').value || '',
+                    sortMethod: document.getElementById('sortMethod').value,
+                    enableAnonymization: document.getElementById('enableAnonymization').checked,
+                    randomizeData: document.getElementById('randomizeData').checked,
+                    processAllFiles: document.getElementById('processAllFiles').checked,
+                    removePrivateTags: document.getElementById('stripPrivateTags').checked
+                };
+            }
+
+            log(message, type = 'info') {
+                const logContainer = document.getElementById('logContainer');
+                const timestamp = new Date().toLocaleTimeString();
+                const logEntry = document.createElement('div');
+                logEntry.className = 'log-entry';
+                
+                logEntry.innerHTML = `
+                    <span class="log-timestamp">[${timestamp}]</span>
+                    <span class="log-${type}">${message}</span>
+                `;
+                
+                logContainer.appendChild(logEntry);
+                logContainer.style.display = 'block';
+                logContainer.scrollTop = logContainer.scrollHeight;
+                
+                // Console log for debugging
+                console.log(`[${timestamp}] [${type.toUpperCase()}] ${message}`);
+            }
+
+            renderTreePreview() {
+                try {
+                    const panel = document.getElementById('previewPanel');
+                    const target = document.getElementById('treePreview');
+                    const plan = this.dayPlan || this.studyPlan; // prefer new plan
+                    if (!plan || !plan.buckets?.length) {
+                        panel.style.display = 'none';
+                        return;
+                    }
+                    const sanitize = (value, fallback = 'UNSPECIFIED') => {
+                        const cleaned = (value || '').toString().trim().replace(/[^A-Za-z0-9._-]/g, '_').replace(/_+/g, '_').replace(/^_+|_+$/g, '');
+                        return cleaned || fallback;
+                    };
+
+                    // Precompute basePath -> files for preview
+                    const byBasePath = new Map();
+                    const queue = this.previewQueue || [];
+                    for (const q of queue) {
+                        const m = q.metadata;
+                        const date = m.acquisitionDate || '19700101';
+                        const forUID = (m.frameOfReferenceUID || '').toString();
+                        const clusterKey = forUID ? `FOR:${forUID}` : `SER:${m.seriesInstanceUID || 'UNKNOWN'}`;
+                        const basePath = this.dayFoRMapping.get(`${date}:${clusterKey}`) || `D0/T1-${this.abbrevModality(m.modality)}`;
+                        if (!byBasePath.has(basePath)) byBasePath.set(basePath, []);
+                        byBasePath.get(basePath).push(m);
+                    }
+
+                    const lines = [];
+                    for (const bucket of plan.buckets) {
+                        const dLabel = `${bucket.dLabel} (${bucket.date.substring(0,4)}-${bucket.date.substring(4,6)}-${bucket.date.substring(6,8)})/`;
+                        lines.push(dLabel);
+                        const clusters = bucket.clusters || [];
+                        const lastIdx = clusters.length - 1;
+                        clusters.forEach((cluster, idx) => {
+                            const prefix = idx === lastIdx ? '└─ ' : '├─ ';
+                            lines.push(`${prefix}${cluster.tLabel}/`);
+
+                            const base = `D${bucket.dIndex}/${cluster.tLabel}`;
+                            const arr = byBasePath.get(base) || [];
+                            // Build series index with optional ID tokens for RS/RP/RD
+                            const seriesMap = new Map();
+                            for (const m of arr) {
+                                const sUID = m.seriesInstanceUID || `SER_${m.fileCounter}`;
+                                const modality = this.abbrevModality(m.modality);
+                                if (!seriesMap.has(sUID)) {
+                                    seriesMap.set(sUID, { seriesNumber: m.seriesNumber, modality, count: 0, id: '' });
+                                }
+                                const node = seriesMap.get(sUID);
+                                node.count += 1;
+                                if (!node.id) {
+                                    if (modality === 'RS' && m.structureSetLabel) node.id = sanitize(m.structureSetLabel);
+                                    if (modality === 'RP' && m.rtPlanLabel) node.id = sanitize(m.rtPlanLabel);
+                                    if (modality === 'RD' && m.associatedPlanLabel) node.id = sanitize(m.associatedPlanLabel);
+                                }
+                            }
+                            const seriesArr = Array.from(seriesMap.values()).sort((a,b)=>{
+                                const sa = `${a.seriesNumber || ''}`.toString().padStart(6,'0');
+                                const sb = `${b.seriesNumber || ''}`.toString().padStart(6,'0');
+                                return sa.localeCompare(sb);
+                            });
+                            const sLast = seriesArr.length - 1;
+                            seriesArr.forEach((ser, si) => {
+                                const sp = si === sLast ? '   └─ ' : '   ├─ ';
+                                let label = `SERIES_${ser.seriesNumber || '0'}_${ser.modality} (${ser.count} files)`;
+                                if (ser.id) {
+                                    if (ser.modality === 'RS') label += ` [RS:${ser.id}]`;
+                                    if (ser.modality === 'RP') label += ` [RP:${ser.id}]`;
+                                    if (ser.modality === 'RD') label += ` [RD:${ser.id}]`;
+                                }
+                                lines.push(`${sp}${label}`);
+                            });
+                        });
+                        lines.push('');
+                    }
+
+                    target.textContent = lines.join('\n');
+                    panel.style.display = 'block';
+
+                    // Also mirror into results panel once processing completes
+                    const resTree = document.getElementById('resultsTree');
+                    if (resTree) {
+                        resTree.textContent = target.textContent;
+                        resTree.style.display = 'block';
+                    }
+                } catch (e) {
+                    this.log(`Failed to render preview: ${e.message}`, 'error');
+                }
+            }
+        }
+    </script>
+</body>
+</html>
